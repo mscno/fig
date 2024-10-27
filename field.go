@@ -176,6 +176,10 @@ func parseTag(tag reflect.StructTag, key string) (st structTag) {
 		st.defaultVal = val
 	}
 
+	if val, ok := tag.Lookup("env"); ok {
+		st.envKey = val
+	}
+
 	return
 }
 
@@ -185,4 +189,5 @@ type structTag struct {
 	required   bool   // true if the tag contained a required validation key.
 	setDefault bool   // true if tag contained a default key.
 	defaultVal string // the value of the default key.
+	envKey     string
 }

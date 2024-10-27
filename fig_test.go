@@ -1,6 +1,7 @@
 package fig
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -196,7 +197,7 @@ func Test_fig_Load_FileNotFound(t *testing.T) {
 	fig := defaultFig()
 	fig.filename = "abrakadabra"
 	var cfg Pod
-	err := fig.Load(&cfg)
+	err := fig.load(&cfg)
 	if err == nil {
 		t.Fatalf("expected err")
 	}
@@ -210,7 +211,7 @@ func Test_fig_Load_NonStructPtr(t *testing.T) {
 		X int
 	}{}
 	fig := defaultFig()
-	err := fig.Load(cfg)
+	err := fig.load(cfg)
 	if err == nil {
 		t.Fatalf("fig.Load() returned nil error")
 	}
@@ -476,6 +477,101 @@ func Test_fig_Load_WithOptions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_fig_Load_Reader(t *testing.T) {
+	t.Run("a read is correctly loaded", func(t *testing.T) {
+		for _, f := range []string{"server.yaml", "server.json", "server.toml"} {
+			t.Run(f, func(t *testing.T) {
+				type Server struct {
+					Host   string `fig:"host" default:"127.0.0.1"`
+					Ports  []int  `fig:"ports" default:"[80,443]"`
+					Logger struct {
+						LogLevel   string         `fig:"log_level" default:"info"`
+						Pattern    *regexp.Regexp `fig:"pattern" default:".*"`
+						Production bool           `fig:"production"`
+						Metadata   struct {
+							Keys []string `fig:"keys" default:"[ts]"`
+						}
+					}
+					Application struct {
+						BuildDate time.Time `fig:"build_date" default:"2020-01-01T12:00:00Z"`
+					}
+					Listener ListenerType `fig:"listener_type" default:"unix"`
+				}
+
+				var want Server
+				want.Host = "0.0.0.0"
+				want.Ports = []int{80, 443}
+				want.Logger.LogLevel = "debug"
+				want.Logger.Pattern = regexp.MustCompile(".*")
+				want.Logger.Production = false
+				want.Logger.Metadata.Keys = []string{"ts"}
+				want.Application.BuildDate = time.Date(2020, 1, 1, 12, 0, 0, 0, time.UTC)
+				want.Listener = ListenerUnix
+
+				path := filepath.Join("testdata", "valid", f)
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("failed to read file %s: %v", path, err)
+				}
+
+				var cfg Server
+				err = Load(&cfg, WithReader(bytes.NewBuffer(data), FileFormat(filepath.Ext(path))))
+				if err != nil {
+					t.Fatalf("unexpected err: %v", err)
+				}
+
+				if !reflect.DeepEqual(want, cfg) {
+					t.Errorf("\nwant %+v\ngot %+v", want, cfg)
+				}
+			})
+		}
+	})
+
+	t.Run("bad defaults reported as errors", func(t *testing.T) {
+		for _, f := range []string{"server.yaml", "server.json", "server.toml"} {
+			t.Run(f, func(t *testing.T) {
+				type Server struct {
+					Host   string `fig:"host" default:"127.0.0.1"`
+					Ports  []int  `fig:"ports" default:"[80,not-a-port]"`
+					Logger struct {
+						LogLevel string `fig:"log_level" default:"info"`
+						Metadata struct {
+							Keys []string `fig:"keys" validate:"required"`
+						}
+					}
+					Application struct {
+						BuildDate time.Time `fig:"build_date" default:"not-a-time"`
+					}
+				}
+
+				var cfg Server
+				err := Load(&cfg, File(f), Dirs(filepath.Join("testdata", "valid")))
+				if err == nil {
+					t.Fatalf("expected err")
+				}
+
+				want := []string{
+					"ports",
+					"Logger.Metadata.keys",
+					"Application.build_date",
+				}
+
+				fieldErrs := err.(fieldErrors)
+
+				if len(want) != len(fieldErrs) {
+					t.Fatalf("\nlen(fieldErrs) != %d\ngot %+v\n", len(want), fieldErrs)
+				}
+
+				for _, field := range want {
+					if _, ok := fieldErrs[field]; !ok {
+						t.Errorf("want %s in fieldErrs, got %+v", field, fieldErrs)
+					}
+				}
+			})
+		}
+	})
 }
 
 func Test_fig_Load_IgnoreFile(t *testing.T) {

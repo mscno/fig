@@ -1,15 +1,15 @@
 package fig
 
 import (
-	"fmt"
+	"errors"
 	"testing"
 )
 
 func Test_fieldErrors_Error(t *testing.T) {
 	fe := make(fieldErrors)
 
-	fe["B"] = fmt.Errorf("berr")
-	fe["A"] = fmt.Errorf("aerr")
+	fe["B"] = errors.New("berr")
+	fe["A"] = errors.New("aerr")
 
 	got := fe.Error()
 

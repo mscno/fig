@@ -1,5 +1,7 @@
 package fig
 
+import "io"
+
 // Option configures how fig loads the configuration.
 type Option func(f *fig)
 
@@ -28,6 +30,22 @@ func File(name string) Option {
 func IgnoreFile() Option {
 	return func(f *fig) {
 		f.ignoreFile = true
+	}
+}
+
+// WithReader returns an option that configures fig to read the configuration
+// from the provided reader.
+//
+// The format parameter must be one of the supported file formats: `yaml`, `yml`, `json` or `toml`.
+//
+//	fig.Load(&cfg, fig.WithReader(strings.NewReader("key: value"), fig.YAML))
+//
+// If this option is not used then fig looks for a file with name `config.yaml`.
+func WithReader(r io.Reader, format FileFormat) Option {
+	return func(f *fig) {
+		f.ignoreFile = true
+		f.reader = r
+		f.format = format
 	}
 }
 

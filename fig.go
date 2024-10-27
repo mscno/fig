@@ -2,7 +2,9 @@ package fig
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,6 +28,18 @@ const (
 	DefaultTag = "fig"
 	// DefaultTimeLayout is the default time layout that fig uses to parse times.
 	DefaultTimeLayout = time.RFC3339
+)
+
+// FileFormat represents the supported configuration formats.
+type FileFormat string
+
+const (
+	// FormatYAML represents YAML format.
+	FormatYAML FileFormat = ".yaml"
+	// FormatJSON represents JSON format.
+	FormatJSON FileFormat = ".json"
+	// FormatTOML represents TOML format.
+	FormatTOML FileFormat = ".toml"
 )
 
 // StringUnmarshaler is an interface designed for custom string unmarshaling.
@@ -99,7 +113,74 @@ func Load(cfg interface{}, options ...Option) error {
 		opt(fig)
 	}
 
-	return fig.Load(cfg)
+	return fig.load(cfg)
+}
+
+// INTERNAL API
+
+func (f *fig) load(cfg interface{}) error {
+	if !isStructPtr(cfg) {
+		return errors.New("cfg must be a pointer to a struct")
+	}
+	var err error
+	var vals map[string]interface{}
+
+	if !f.ignoreFile {
+		file, err := f.findCfgFile()
+		if err != nil {
+			return err
+		}
+		vals, err = f.decodeFile(file)
+		if err != nil {
+			return err
+		}
+	}
+
+	if f.reader != nil {
+		vals, err = decodeReader(f.reader, string(f.format))
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := f.decodeMap(vals, cfg); err != nil {
+		return err
+	}
+
+	return f.processCfg(cfg)
+}
+
+func (f *fig) decodeFile(file string) (map[string]interface{}, error) {
+	fd, err := os.Open(file)
+	if err != nil {
+		return nil, err
+	}
+	defer fd.Close()
+
+	return decodeReader(fd, filepath.Ext(file))
+}
+
+func decodeReader(r io.Reader, format string) (map[string]interface{}, error) {
+	vals := make(map[string]interface{})
+
+	switch format {
+	case ".yaml", ".yml":
+		if err := yaml.NewDecoder(r).Decode(&vals); err != nil {
+			return nil, fmt.Errorf("failed to decode YAML: %w", err)
+		}
+	case ".json":
+		if err := json.NewDecoder(r).Decode(&vals); err != nil {
+			return nil, fmt.Errorf("failed to decode JSON: %w", err)
+		}
+	case ".toml":
+		if err := toml.NewDecoder(r).Decode(&vals); err != nil {
+			return nil, fmt.Errorf("failed to decode TOML: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported format: %s", format)
+	}
+
+	return vals, nil
 }
 
 func defaultFig() *fig {
@@ -120,32 +201,8 @@ type fig struct {
 	useStrict  bool
 	ignoreFile bool
 	envPrefix  string
-}
-
-func (f *fig) Load(cfg interface{}) error {
-	if !isStructPtr(cfg) {
-		return fmt.Errorf("cfg must be a pointer to a struct")
-	}
-
-	vals := make(map[string]interface{})
-
-	if !f.ignoreFile {
-		file, err := f.findCfgFile()
-		if err != nil {
-			return err
-		}
-
-		vals, err = f.decodeFile(file)
-		if err != nil {
-			return err
-		}
-	}
-
-	if err := f.decodeMap(vals, cfg); err != nil {
-		return err
-	}
-
-	return f.processCfg(cfg)
+	reader     io.Reader
+	format     FileFormat
 }
 
 func (f *fig) findCfgFile() (path string, err error) {
@@ -156,36 +213,6 @@ func (f *fig) findCfgFile() (path string, err error) {
 		}
 	}
 	return "", fmt.Errorf("%s: %w", f.filename, ErrFileNotFound)
-}
-
-// decodeFile reads the file and unmarshalls it using a decoder based on the file extension.
-func (f *fig) decodeFile(file string) (map[string]interface{}, error) {
-	fd, err := os.Open(file)
-	if err != nil {
-		return nil, err
-	}
-	defer fd.Close()
-
-	vals := make(map[string]interface{})
-
-	switch filepath.Ext(file) {
-	case ".yaml", ".yml":
-		if err := yaml.NewDecoder(fd).Decode(&vals); err != nil {
-			return nil, err
-		}
-	case ".json":
-		if err := json.NewDecoder(fd).Decode(&vals); err != nil {
-			return nil, err
-		}
-	case ".toml":
-		if err := toml.NewDecoder(fd).Decode(&vals); err != nil {
-			return nil, err
-		}
-	default:
-		return nil, fmt.Errorf("unsupported file extension %s", filepath.Ext(f.filename))
-	}
-
-	return vals, nil
 }
 
 // decodeMap decodes a map of values into result using the mapstructure library.
@@ -279,17 +306,22 @@ func (f *fig) processCfg(cfg interface{}) error {
 // for each field in cfg.
 func (f *fig) processField(field *field) error {
 	if field.required && field.setDefault {
-		return fmt.Errorf("field cannot have both a required validation and a default value")
+		return errors.New("field cannot have both a required validation and a default value")
 	}
 
 	if f.useEnv {
-		if err := f.setFromEnv(field.v, field.path()); err != nil {
+		key := field.path()
+		if field.envKey != "" {
+			key = field.envKey
+		}
+
+		if err := f.setFromEnv(field.v, key); err != nil {
 			return fmt.Errorf("unable to set from env: %w", err)
 		}
 	}
 
 	if field.required && isZero(field.v) {
-		return fmt.Errorf("required validation failed")
+		return errors.New("required validation failed")
 	}
 
 	if field.setDefault && isZero(field.v) {

@@ -1,17 +1,20 @@
 package fig
 
 import (
-	"fmt"
+	"errors"
 	"sort"
 	"strings"
 )
 
 // ErrFileNotFound is returned as a wrapped error by `Load` when the config file is
 // not found in the given search dirs.
-var ErrFileNotFound = fmt.Errorf("file not found")
+var ErrFileNotFound = errors.New("file not found")
 
 // fieldErrors collects errors for fields of config struct.
 type fieldErrors map[string]error
+
+// growFactor is the factor by which the string builder grows when it needs more space.
+const growFactor = 10
 
 // Error formats all fields errors into a single string.
 func (fe fieldErrors) Error() string {
@@ -22,7 +25,7 @@ func (fe fieldErrors) Error() string {
 	sort.Strings(keys)
 
 	var sb strings.Builder
-	sb.Grow(len(keys) * 10)
+	sb.Grow(len(keys) * growFactor)
 
 	for _, key := range keys {
 		sb.WriteString(key)
