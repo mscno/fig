@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/kkyr/fig"
+	"github.com/mscno/fig"
 )
 
 type Config struct {

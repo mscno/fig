@@ -34,7 +34,7 @@ Define your struct and load it:
 	import (
 	  "fmt"
 
-	  "github.com/kkyr/fig"
+	  "github.com/mscno/fig"
 	)
 
 
